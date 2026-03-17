@@ -1,0 +1,16 @@
+# Claude Code local settings
+.claude/
+
+# OpenClaw workspace/agent files
+.openclaw/
+AGENTS.md
+BOOTSTRAP.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BrowseClaw</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <!-- Header -->
+  <header id="header">
+    <div class="header-left">
+      <span class="logo">🦞</span>
+      <h1>BrowseClaw</h1>
+    </div>
+    <div class="header-right">
+      <div id="status-indicator" class="status disconnected" title="Disconnected">
+        <span class="status-dot"></span>
+        <span class="status-text">Offline</span>
+      </div>
+      <button id="btn-sessions" class="icon-btn" title="Sessions">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1.333" y="2" width="13.333" height="2.667" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="1.333" y="6.667" width="13.333" height="2.667" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="1.333" y="11.333" width="8" height="2.667" rx="1" stroke="currentColor" stroke-width="1.5"/></svg>
+      </button>
+      <button id="btn-clear" class="icon-btn" title="Clear chat">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M5.333 4V2.667a1.333 1.333 0 011.334-1.334h2.666a1.333 1.333 0 011.334 1.334V4m2 0v9.333a1.333 1.333 0 01-1.334 1.334H4.667a1.333 1.333 0 01-1.334-1.334V4h9.334z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="btn-settings" class="icon-btn" title="Settings">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 10a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" stroke-width="1.5"/><path d="M13.05 10a1.1 1.1 0 00.22 1.213l.04.04a1.334 1.334 0 11-1.887 1.887l-.04-.04A1.1 1.1 0 0010 13.32v.013A1.333 1.333 0 017.333 14v-.073A1.1 1.1 0 006 12.82a1.1 1.1 0 00-1.213.22l-.04.04a1.334 1.334 0 11-1.887-1.887l.04-.04A1.1 1.1 0 003.12 10a1.1 1.1 0 00-1.107-1.1H2A1.333 1.333 0 012 6.567h.073A1.1 1.1 0 003.18 5.46a1.1 1.1 0 00-.22-1.213l-.04-.04a1.334 1.334 0 111.887-1.887l.04.04A1.1 1.1 0 006 2.58V2.567a1.333 1.333 0 012.667 0V2.64A1.1 1.1 0 0010 3.18a1.1 1.1 0 001.213-.22l.04-.04a1.334 1.334 0 111.887 1.887l-.04.04A1.1 1.1 0 0012.88 6v.107a1.1 1.1 0 001.107 1.1H14a1.333 1.333 0 010 2.666h-.073A1.1 1.1 0 0013.05 10z" stroke="currentColor" stroke-width="1.5"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Quick Actions Bar -->
+  <div id="quick-actions">
+    <button class="quick-btn" data-prompt="Summarize this page concisely">Summarize</button>
+    <button class="quick-btn" data-prompt="Extract all the key data from this page into a structured format">Extract Data</button>
+    <button class="quick-btn" data-prompt="List and describe all the forms and interactive elements on this page">Scan Forms</button>
+    <button class="quick-btn" data-prompt="What can I do on this page? List the main actions available">Actions</button>
+    <button class="quick-btn" data-prompt="Take a screenshot of this page and describe what you see in detail" data-vision="true">Describe (Vision)</button>
+  </div>
+
+  <!-- Chat Area -->
+  <div id="chat-container">
+    <div id="messages">
+      <div class="message system">
+        <div class="message-content">
+          <p><strong>Welcome to BrowseClaw</strong></p>
+          <p>I can see your current webpage and chat with you about it. Try asking me to:</p>
+          <ul>
+            <li>Summarize or extract data from the page</li>
+            <li>Find specific information</li>
+            <li>Explain complex content</li>
+            <li>Answer questions about what you're viewing</li>
+          </ul>
+          <p class="hint">Connected to OpenClaw gateway via WebSocket. Enable <strong>Page context</strong> to include page content with your messages.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tool Activity Indicator -->
+  <div id="tool-activity" class="hidden">
+    <div class="tool-spinner"></div>
+    <span id="tool-activity-text">Working...</span>
+    <button id="btn-step-continue" class="step-continue-btn hidden">Step →</button>
+  </div>
+
+  <!-- Input Area -->
+  <div id="input-area">
+    <div id="context-toggles">
+      <label class="toggle-label" title="Include page text content with your message">
+        <input type="checkbox" id="include-context" checked>
+        <span class="toggle-switch"></span>
+        <span class="toggle-text">Page context</span>
+      </label>
+      <label class="toggle-label" title="Attach a screenshot so OpenClaw can visually see the page">
+        <input type="checkbox" id="include-vision">
+        <span class="toggle-switch"></span>
+        <span class="toggle-text">Vision</span>
+      </label>
+    </div>
+    <div class="input-row">
+      <textarea id="user-input" placeholder="Ask me anything about this page..." rows="1"></textarea>
+      <button id="btn-send" title="Send message (Enter)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="btn-stop" class="hidden" title="Stop generation">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="2" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Settings Panel (Inline) -->
+  <div id="settings-panel" class="hidden">
+    <div class="settings-header">
+      <h2>Settings</h2>
+      <button id="btn-close-settings" class="icon-btn">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M12 4L4 12M4 4l8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="settings-body">
+      <div class="form-group">
+        <label for="setting-api-url">Gateway URL</label>
+        <input type="text" id="setting-api-url" placeholder="ws://127.0.0.1:18790">
+        <p class="form-hint">OpenClaw Gateway WebSocket address</p>
+      </div>
+      <div class="form-group">
+        <label for="setting-api-token">API Token</label>
+        <div class="input-with-toggle">
+          <input type="password" id="setting-api-token" placeholder="Enter your OpenClaw API token">
+          <button id="toggle-token-vis" class="icon-btn" title="Show/hide token">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.5"/></svg>
+          </button>
+        </div>
+        <p class="form-hint">Found in your OpenClaw config (~/.openclaw/openclaw.json)</p>
+      </div>
+      <div class="form-group">
+        <label for="setting-model">Model</label>
+        <div class="model-selector">
+          <select id="setting-model-select">
+            <option value="">-- Select or type custom --</option>
+          </select>
+          <input type="text" id="setting-model" placeholder="openclaw">
+          <button id="btn-fetch-models" class="icon-btn" title="Fetch available models">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M14 8A6 6 0 114.34 3.34" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M14 2v4h-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <p class="form-hint">Select from fetched models or type a custom identifier</p>
+      </div>
+      <div class="form-group">
+        <label for="setting-max-context">Max Page Context (chars)</label>
+        <input type="number" id="setting-max-context" placeholder="12000" min="1000" max="100000" step="1000">
+      </div>
+      <div class="form-group">
+        <label>Theme</label>
+        <div class="theme-buttons">
+          <button class="theme-btn active" data-theme="dark">Dark</button>
+          <button class="theme-btn" data-theme="light">Light</button>
+          <button class="theme-btn" data-theme="system">System</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Debug Mode</label>
+        <label class="toggle-label">
+          <input type="checkbox" id="setting-debug-mode">
+          <span class="toggle-switch"></span>
+          <span class="toggle-text">Visual action debugging</span>
+        </label>
+        <div id="debug-extra" class="debug-extra hidden">
+          <div class="debug-row">
+            <span class="debug-row-label">Step delay</span>
+            <select id="setting-debug-delay">
+              <option value="0">None</option>
+              <option value="300">300ms</option>
+              <option value="500" selected>500ms</option>
+              <option value="800">800ms</option>
+              <option value="1200">1200ms</option>
+            </select>
+          </div>
+          <label class="toggle-label" style="margin-top:6px;">
+            <input type="checkbox" id="setting-debug-step">
+            <span class="toggle-switch"></span>
+            <span class="toggle-text">Step-by-step (pause before each action)</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Device Identity</label>
+        <div id="device-status" class="form-hint">Not loaded</div>
+        <button id="btn-load-device" class="btn-secondary" style="margin-top: 6px; width: auto; flex: none; padding: 6px 12px; font-size: 12px;">Load from ~/.openclaw/identity/</button>
+      </div>
+      <div class="settings-actions">
+        <button id="btn-test-connection" class="btn-secondary">Test Connection</button>
+        <button id="btn-save-settings" class="btn-primary">Save Settings</button>
+      </div>
+      <div id="settings-status" class="hidden"></div>
+    </div>
+  </div>
+
+  <!-- Sessions Panel -->
+  <div id="sessions-panel" class="hidden">
+    <div class="settings-header">
+      <h2>Sessions</h2>
+      <button id="btn-close-sessions" class="icon-btn">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M12 4L4 12M4 4l8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="sessions-body">
+      <button id="btn-new-session" class="btn-primary" style="margin-bottom:12px;">+ New Session</button>
+      <div id="sessions-list"></div>
+    </div>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>
