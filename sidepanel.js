@@ -425,6 +425,7 @@ function setupEventListeners() {
     messages.innerHTML = '';
     addSystemMessage('Chat cleared. How can I help with this page?');
     chrome.storage.local.remove('chromeclaw_chat');
+    updateContextMeter();
   });
 
   // Settings panel
@@ -648,6 +649,42 @@ function extractTextContent(content) {
 async function saveChat() {
   const toSave = conversationHistory.slice(-50);
   await chrome.storage.local.set({ chromeclaw_chat: toSave });
+  updateContextMeter();
+}
+
+function updateContextMeter() {
+  const meter = document.getElementById('context-meter');
+  const label = document.getElementById('ctx-label');
+  if (!meter || !label) return;
+
+  const msgs = conversationHistory.filter(m => m.role === 'user' || m.role === 'assistant');
+  const userCount = msgs.filter(m => m.role === 'user').length;
+
+  // Raw history chars
+  const historyChars = msgs.reduce((sum, m) => {
+    const t = m.role === 'user' ? (m.text || '') : extractTextContent(m.content || '');
+    return sum + t.length;
+  }, 0);
+
+  // Estimate page context contribution (injected server-side per user message)
+  const pageCtxPerMsg = settings.includeContext ? Math.min(settings.maxContext || 12000, 12000) : 0;
+  const totalEstimate = historyChars + userCount * pageCtxPerMsg;
+
+  // Thresholds: warn at ~10 exchanges or ~80k chars, danger at ~20 or ~160k
+  let level = 'safe';
+  if (userCount >= 20 || totalEstimate >= 160000) level = 'danger';
+  else if (userCount >= 10 || totalEstimate >= 80000) level = 'warn';
+
+  const kChars = Math.round(totalEstimate / 1000);
+  label.textContent = `${userCount} msgs · ~${kChars}k`;
+  meter.dataset.level = level;
+
+  const hint = level === 'danger'
+    ? '⚠️ Context is large — consider starting a new session'
+    : level === 'warn'
+    ? '⚠️ Context growing — new session soon recommended'
+    : 'Context is fine';
+  meter.title = `~${kChars}k chars estimated (${historyChars} history + ~${Math.round(userCount * pageCtxPerMsg / 1000)}k page ctx)\n${hint}`;
 }
 
 async function restoreChat() {
@@ -673,6 +710,7 @@ async function restoreChat() {
       }
     });
   }
+  updateContextMeter();
 }
 
 // ─── Session Management ─────────────────────────────────────────────────────────
@@ -722,6 +760,7 @@ async function switchToSession(sessionId) {
       if (displayContent) addMessageBubble('assistant', displayContent);
     }
   });
+  updateContextMeter();
   closeSessions();
 }
 
@@ -742,6 +781,7 @@ async function startNewSession() {
   messages.innerHTML = '';
   addSystemMessage('New session started. How can I help with this page?');
   chrome.storage.local.remove('chromeclaw_chat');
+  updateContextMeter();
   closeSessions();
 }
 

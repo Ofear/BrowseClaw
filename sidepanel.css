@@ -657,8 +657,40 @@ body {
 
 #context-toggles {
   display: flex;
+  align-items: center;
   gap: 14px;
   margin-bottom: 8px;
+}
+
+#context-meter {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: default;
+  white-space: nowrap;
+}
+
+.ctx-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+
+#context-meter[data-level="warn"] { color: #f59e0b; }
+#context-meter[data-level="warn"] .ctx-dot { background: #f59e0b; }
+
+#context-meter[data-level="danger"] { color: var(--error); }
+#context-meter[data-level="danger"] .ctx-dot { background: var(--error); animation: ctx-pulse 1.5s ease-in-out infinite; }
+
+@keyframes ctx-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 .toggle-label {
