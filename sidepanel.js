@@ -12,6 +12,8 @@ let visionMessageCount = 0; // track how many vision messages sent in current se
 const VISION_SESSION_ROTATE_AFTER = 5; // rotate session key after this many vision screenshots
 const VISION_REMIND_AFTER = 3;         // show "turn off vision" reminder after this many vision messages
 let visionReminderShown = false;
+const modelContextWindowMap = {};      // model id → context window in chars (populated from models.list)
+let modelContextWindow = null;         // context window of currently selected model (null = unknown)
 let settings = {
   apiUrl: 'ws://127.0.0.1:18790',
   apiToken: '',
@@ -458,6 +460,7 @@ function setupEventListeners() {
     settings.debugDelay = parseInt(document.getElementById('setting-debug-delay').value) || 0;
     settings.debugStepByStep = document.getElementById('setting-debug-step').checked;
     await saveSettings();
+    updateModelContextWindow();
     showSettingsStatus('Settings saved!', 'success');
     // Reconnect with new settings
     if (openclawClient) {
@@ -652,6 +655,11 @@ async function saveChat() {
   updateContextMeter();
 }
 
+function updateModelContextWindow() {
+  modelContextWindow = modelContextWindowMap[settings.model] || null;
+  updateContextMeter();
+}
+
 function updateContextMeter() {
   const meter = document.getElementById('context-meter');
   const label = document.getElementById('ctx-label');
@@ -666,25 +674,40 @@ function updateContextMeter() {
     return sum + t.length;
   }, 0);
 
-  // Estimate page context contribution (injected server-side per user message)
+  // Estimate page context contribution (injected per user message)
   const pageCtxPerMsg = settings.includeContext ? Math.min(settings.maxContext || 12000, 12000) : 0;
   const totalEstimate = historyChars + userCount * pageCtxPerMsg;
-
-  // Thresholds: warn at ~10 exchanges or ~80k chars, danger at ~20 or ~160k
-  let level = 'safe';
-  if (userCount >= 20 || totalEstimate >= 160000) level = 'danger';
-  else if (userCount >= 10 || totalEstimate >= 80000) level = 'warn';
-
   const kChars = Math.round(totalEstimate / 1000);
-  label.textContent = `${userCount} msgs · ~${kChars}k`;
-  meter.dataset.level = level;
 
-  const hint = level === 'danger'
-    ? '⚠️ Context is large — consider starting a new session'
-    : level === 'warn'
-    ? '⚠️ Context growing — new session soon recommended'
-    : 'Context is fine';
-  meter.title = `~${kChars}k chars estimated (${historyChars} history + ~${Math.round(userCount * pageCtxPerMsg / 1000)}k page ctx)\n${hint}`;
+  let level = 'safe';
+  let labelText, hintLine;
+
+  if (modelContextWindow) {
+    const pct = Math.round(totalEstimate / modelContextWindow * 100);
+    const maxLabel = modelContextWindow >= 4000000 ? `${Math.round(modelContextWindow / 4000000)}M`
+      : modelContextWindow >= 1000000 ? `${(modelContextWindow / 1000000).toFixed(1)}M`
+      : `${Math.round(modelContextWindow / 1000)}k`;
+    level = pct >= 85 ? 'danger' : pct >= 55 ? 'warn' : 'safe';
+    labelText = `${userCount} msgs · ${pct}% of ${maxLabel}`;
+    hintLine = pct >= 85
+      ? '⚠️ Context nearly full — start a new session soon'
+      : pct >= 55
+      ? '⚠️ Context over half full — consider a new session'
+      : 'Context is fine';
+  } else {
+    // No context window info — fall back to message count heuristics
+    level = userCount >= 20 ? 'danger' : userCount >= 10 ? 'warn' : 'safe';
+    labelText = `${userCount} msgs · ~${kChars}k`;
+    hintLine = level === 'danger'
+      ? '⚠️ Context is large — consider starting a new session'
+      : level === 'warn'
+      ? '⚠️ Context growing — new session soon recommended'
+      : 'Context size unknown (fetch models to get limit)';
+  }
+
+  label.textContent = labelText;
+  meter.dataset.level = level;
+  meter.title = `~${kChars}k chars estimated (${historyChars} in history + ~${Math.round(userCount * pageCtxPerMsg / 1000)}k page ctx)\n${modelContextWindow ? `Model context window: ${Math.round(modelContextWindow / 4)}k tokens\n` : 'Model context window: unknown — fetch models in settings\n'}${hintLine}`;
 }
 
 async function restoreChat() {
@@ -1840,15 +1863,15 @@ async function fetchAvailableModels() {
     const result = await fetchClient.request('models.list');
     fetchClient.disconnect();
 
-    if (result && Array.isArray(result.models)) {
-      for (const m of result.models) {
-        models.push({ id: m.id || m, source: 'OpenClaw', label: m.name || m.id || m });
-      }
-    } else if (result && Array.isArray(result)) {
-      for (const m of result) {
-        const id = typeof m === 'string' ? m : m.id;
-        models.push({ id, source: 'OpenClaw', label: typeof m === 'string' ? m : (m.name || m.id) });
-      }
+    const rawModels = Array.isArray(result?.models) ? result.models
+      : Array.isArray(result) ? result : [];
+    for (const m of rawModels) {
+      const id = typeof m === 'string' ? m : (m.id || m);
+      const label = typeof m === 'string' ? m : (m.name || m.id || m);
+      // OpenClaw gateway returns contextWindow (tokens, optional)
+      const ctxTokens = m.contextWindow || null;
+      if (ctxTokens && id) modelContextWindowMap[id] = ctxTokens * 4; // tokens → chars estimate
+      models.push({ id, source: 'OpenClaw', label });
     }
   } catch {}
 
@@ -1907,10 +1930,14 @@ async function fetchAvailableModels() {
 
   btn.disabled = false;
   if (openclawModels.length > 0) {
-    showSettingsStatus(`Found ${openclawModels.length} model(s) from OpenClaw gateway.`, 'success');
+    const withCtx = openclawModels.filter(m => modelContextWindowMap[m.id]).length;
+    const ctxNote = withCtx > 0 ? ` (${withCtx} with context window info)` : '';
+    showSettingsStatus(`Found ${openclawModels.length} model(s) from OpenClaw gateway.${ctxNote}`, 'success');
   } else {
     showSettingsStatus('Could not fetch models from gateway. Using defaults.', 'info');
   }
+  // Update the context meter with the new context window info for the selected model
+  updateModelContextWindow();
 }
 
 // ─── Markdown Renderer (lightweight, no dependencies) ───────────────────────────
