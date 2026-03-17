@@ -1013,7 +1013,7 @@ async function runAgentLoop(messageText, attachments = null) {
   isGenerating = true;
   updateSendButton();
 
-  let currentBubble = null;
+  let currentBubble = createThinkingBubble();
   let accumulatedContent = '';
   let sessionKey = currentSessionKey;
 
@@ -1048,6 +1048,10 @@ async function runAgentLoop(messageText, attachments = null) {
           accumulatedContent = text;
           if (!currentBubble) {
             currentBubble = createAssistantBubble();
+          } else {
+            // Transition from thinking to streaming
+            currentBubble.classList.remove('thinking');
+            currentBubble.classList.add('streaming');
           }
           updateAssistantBubble(currentBubble, accumulatedContent);
         } else if (state === 'final') {
@@ -1107,6 +1111,8 @@ async function runAgentLoop(messageText, attachments = null) {
     }
 
   } catch (err) {
+    // Remove thinking bubble if no content arrived
+    if (currentBubble?.classList.contains('thinking')) currentBubble.remove();
     if (err.message === 'aborted') {
       finalizeCurrentAssistant('[Stopped]');
     } else {
@@ -1669,6 +1675,16 @@ function addVisionReminder() {
   bubble.querySelector('.vision-reminder-dismiss').addEventListener('click', () => bubble.remove());
   messages.appendChild(bubble);
   scrollToBottom();
+}
+
+function createThinkingBubble() {
+  const messages = document.getElementById('messages');
+  const bubble = document.createElement('div');
+  bubble.className = 'message assistant thinking';
+  bubble.innerHTML = `<div class="message-content"><span class="thinking-dots"><span></span><span></span><span></span></span></div>`;
+  messages.appendChild(bubble);
+  scrollToBottom();
+  return bubble;
 }
 
 function createAssistantBubble() {
