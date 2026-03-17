@@ -397,7 +397,6 @@ function setupEventListeners() {
   const input = document.getElementById('user-input');
   const btnSend = document.getElementById('btn-send');
   const btnStop = document.getElementById('btn-stop');
-  const btnClear = document.getElementById('btn-clear');
   const btnSettings = document.getElementById('btn-settings');
   const btnCloseSettings = document.getElementById('btn-close-settings');
   const btnSaveSettings = document.getElementById('btn-save-settings');
@@ -417,18 +416,8 @@ function setupEventListeners() {
   // Stop generation
   btnStop.addEventListener('click', stopGeneration);
 
-  // Clear chat — also rotate session key so the server starts a fresh context with no old images
-  btnClear.addEventListener('click', () => {
-    conversationHistory = [];
-    currentSessionKey = 'chromeclaw-' + Date.now();
-    visionMessageCount = 0;
-    visionReminderShown = false;
-    const messages = document.getElementById('messages');
-    messages.innerHTML = '';
-    addSystemMessage('Chat cleared. How can I help with this page?');
-    chrome.storage.local.remove('chromeclaw_chat');
-    updateContextMeter();
-  });
+  // New session (header button)
+  document.getElementById('btn-new-session-header').addEventListener('click', startNewSession);
 
   // Settings panel
   btnSettings.addEventListener('click', () => {
