@@ -23,7 +23,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }
+
+  if (message.action === 'tabAction') {
+    handleTabAction(message).then(sendResponse).catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  if (message.action === 'getFrameIds') {
+    chrome.webNavigation.getAllFrames({ tabId: message.tabId }, (frames) => {
+      sendResponse(frames || []);
+    });
+    return true;
+  }
 });
+
+async function handleTabAction({ tabAction, params }) {
+  switch (tabAction) {
+    case 'list_tabs': {
+      const tabs = await chrome.tabs.query({});
+      return { success: true, data: tabs.map(t => ({ id: t.id, title: t.title, url: t.url, active: t.active })) };
+    }
+    case 'switch_tab': {
+      await chrome.tabs.update(params.tabId, { active: true });
+      return { success: true };
+    }
+    case 'open_tab': {
+      const tab = await chrome.tabs.create({ url: params.url });
+      return { success: true, data: { id: tab.id } };
+    }
+    case 'close_tab': {
+      await chrome.tabs.remove(params.tabId);
+      return { success: true };
+    }
+    default:
+      throw new Error(`Unknown tab action: ${tabAction}`);
+  }
+}
 
 // ─── Content Script Re-injection on Navigation ─────────────────────────────────
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {

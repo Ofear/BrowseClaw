@@ -122,7 +122,9 @@ body {
 .header-right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
 }
 
 /* ─── Status Indicator ─────────────────────────────────────────────────────── */
@@ -162,6 +164,8 @@ body {
   align-items: center;
   justify-content: center;
   transition: all var(--transition);
+  position: relative;
+  flex-shrink: 0;
 }
 
 .icon-btn:hover {
@@ -1073,8 +1077,11 @@ body {
   color: var(--text-secondary);
 }
 
-/* ─── Sessions Panel ───────────────────────────────────────────────────────── */
-#sessions-panel {
+/* ─── Sessions / History / Memory / Prompts Panels ─────────────────────────── */
+#sessions-panel,
+#history-panel,
+#memory-panel,
+#prompts-panel {
   position: absolute;
   top: 0; left: 0; right: 0; bottom: 0;
   background: var(--bg-primary);
@@ -1083,7 +1090,10 @@ body {
   flex-direction: column;
   overflow-y: auto;
 }
-#sessions-panel.hidden { display: none; }
+#sessions-panel.hidden,
+#history-panel.hidden,
+#memory-panel.hidden,
+#prompts-panel.hidden { display: none; }
 
 .sessions-body {
   padding: 16px;
@@ -1194,4 +1204,247 @@ body {
   flex-shrink: 0;
 }
 .step-continue-btn:hover { background: var(--accent-hover); }
+.step-continue-btn.stop { background: var(--error); }
+.step-continue-btn.stop:hover { background: #c53030; }
 #tool-activity { flex-wrap: wrap; }
+
+/* ─── Task Queue Progress ────────────────────────────────────────────────── */
+#task-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#task-step-label {
+  font-size: 12px;
+  color: var(--accent);
+  flex: 1;
+  font-weight: 500;
+}
+
+/* ─── Header Badge ───────────────────────────────────────────────────────── */
+.header-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  background: #FF6B35;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  min-width: 14px;
+  height: 14px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  pointer-events: none;
+}
+.header-badge.hidden { display: none; }
+
+/* ─── Action Approval ────────────────────────────────────────────────────── */
+.approval-params {
+  font-size: 11px;
+  text-align: left;
+  margin: 8px 0;
+  max-height: 80px;
+  overflow-y: auto;
+  background: var(--bg-tertiary);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+}
+.approval-allow-session {
+  margin: 0 4px;
+  font-size: 12px;
+}
+
+/* ─── Action History Panel ───────────────────────────────────────────────── */
+.history-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.history-toolbar span { flex: 1; }
+.history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  background: var(--bg-tertiary);
+  margin-bottom: 6px;
+}
+.history-item-success { border-left-color: var(--success); }
+.history-item-fail { border-left-color: var(--error); }
+.history-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.history-item-action {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.history-item-time {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.history-item-detail {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Memory Panel ───────────────────────────────────────────────────────── */
+.memory-add-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.memory-key-input,
+.memory-value-input {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  transition: border-color var(--transition);
+}
+.memory-key-input:focus,
+.memory-value-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.15);
+}
+.memory-key-input {
+  width: 90px;
+  flex-shrink: 0;
+}
+.memory-value-input { flex: 1; }
+.memory-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  margin-bottom: 6px;
+}
+.memory-item-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.memory-item-key {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.memory-item-value {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.btn-memory-delete {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 13px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.btn-memory-delete:hover { color: var(--error); background: rgba(239,68,68,0.1); }
+
+/* ─── Export Toolbar ─────────────────────────────────────────────────────── */
+.export-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ─── Prompt Library ─────────────────────────────────────────────────────── */
+.prompt-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  margin-bottom: 6px;
+  transition: border-color var(--transition);
+}
+.prompt-item:hover { border-color: var(--accent); }
+.prompt-item-content { flex: 1; min-width: 0; }
+.prompt-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prompt-item-preview {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+.prompt-item-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.btn-prompt-use {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--accent);
+  color: #fff;
+  transition: all var(--transition);
+}
+.btn-prompt-use:hover { background: var(--accent-hover); }
+.btn-prompt-delete {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-muted);
+  transition: all var(--transition);
+}
+.btn-prompt-delete:hover { color: var(--error); border-color: var(--error); }

@@ -563,6 +563,16 @@
       return { ok: true };
     },
 
+    // ── Iframe Support ────────────────────────────────────────────────────────
+    query_frames: () => Array.from(document.querySelectorAll('iframe')).map((f, i) => ({
+      index: i,
+      src: f.src || null,
+      id: f.id || null,
+      name: f.name || null,
+      width: f.offsetWidth,
+      height: f.offsetHeight
+    })),
+
     // ── Active Element / Focus State ──────────────────────────────────────────
 
     get_focused_element: () => {

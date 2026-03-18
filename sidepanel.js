@@ -24,10 +24,23 @@ let settings = {
   includeVision: false,
   debugMode: false,
   debugDelay: 500,
-  debugStepByStep: false
+  debugStepByStep: false,
+  approvalMode: false
 };
 
 let _stepContinueResolve = null;
+
+// ─── Feature State ──────────────────────────────────────────────────────────
+let approvalAllSession = false;   // reset on new session
+let actionHistory = [];           // cap at 200 entries
+let taskQueue = null;             // { steps, currentStep, status }
+let persistentMemory = {};        // { key: value }
+let savedPrompts = [];            // [{ id, name, text, createdAt }]
+
+const DESTRUCTIVE_ACTIONS = new Set([
+  'click','click_text','fill','type','type_keyboard','select','check',
+  'submit','press_key','drag','right_click','double_click'
+]);
 
 // ─── System Prompt (injected as message prefix) ─────────────────────────────────
 const SYSTEM_PROMPT = `You are BrowseClaw, an AI assistant embedded in a Chrome browser extension. You can SEE and INTERACT with the user's current webpage.
@@ -88,11 +101,28 @@ GUIDELINES:
 1. Be concise. Get straight to the point.
 2. When you have a screenshot, USE it to understand the page layout and identify elements.
 3. When performing actions, describe what you're doing briefly, then include the action block.
-4. After an action, you'll receive a follow-up with the result and a new screenshot (if vision is on).
-5. If a selector doesn't work, try click_text or a different selector.
-6. For forms, scan the fields first (from the screenshot or page context), then fill them.
-7. You can chain multiple actions in one response — they execute in order.
-8. CRITICAL — STAY IN CONTEXT: The page context includes a "Currently focused element" line. If the user asks you to type or send a message, use the CURRENTLY FOCUSED/ACTIVE element. DO NOT click on other contacts, channels, or items to navigate away unless the user explicitly asks you to switch. For chat apps (WhatsApp, Telegram, Slack, Discord): type into the active chat's input box using its selector, do NOT click on the contacts list.`;
+4. After navigation actions (click, submit, press_key, open_tab, etc.) you ALWAYS receive feedback: result status + current page URL/title + screenshot (if vision is on). Use it to verify success before continuing. After pure data-entry (fill, type, scroll, check) with no errors, you won't receive a follow-up — assume they succeeded and continue.
+5. If a selector doesn't work, try click_text or a different selector. Use the returned screenshot to find a better one.
+6. For forms, you can batch all fill/type/select actions in one response — they're safe to chain. But submit or click-to-navigate should be the LAST action in a batch so you can see the result.
+7. STEP-BY-STEP FOR NAVIGATION: After any click or submit that changes the page, output only that action (or at most the click + an immediate follow-up fill) and wait for feedback. Do NOT predict what the next page will look like and pre-write 5 more actions.
+8. KNOWING WHEN TO STOP: When the task is complete, respond normally with no action blocks. Say what you did and the current state. The loop ends automatically when you output no actions.
+9. CRITICAL — STAY IN CONTEXT: The page context includes a "Currently focused element" line. If the user asks you to type or send a message, use the CURRENTLY FOCUSED/ACTIVE element. DO NOT click on other contacts, channels, or items to navigate away unless the user explicitly asks you to switch. For chat apps (WhatsApp, Telegram, Slack, Discord): type into the active chat's input box using its selector, do NOT click on the contacts list.
+
+TAB MANAGEMENT ACTIONS:
+- list_tabs: List all open browser tabs (returns array of {id, title, url, active})
+- switch_tab: Switch to a tab by id (add "tabId": number)
+- open_tab: Open a new tab (add "url": string)
+- close_tab: Close a tab by id (add "tabId": number)
+
+MEMORY ACTIONS (persist across sessions):
+- memory_save: Save a fact for later (add "key": string, "value": string, max 500 chars)
+- memory_get: Retrieve a saved fact (add "key": string)
+- memory_delete: Delete a saved fact (add "key": string)
+
+IFRAME ACTIONS:
+- query_frames: List all iframes on the current page (returns index, src, id, name, dimensions)
+- resolve_frame_id: Get the browser frame ID for an iframe by URL (add "src": string) — use this before targeting actions inside an iframe (pass the returned frameId in your next action)`;
+
 
 // ─── OpenClaw WebSocket Client ──────────────────────────────────────────────────
 // ─── Device Identity Helpers (Ed25519 signing via Web Crypto) ────────────────
@@ -329,7 +359,7 @@ class OpenClawClient {
 
 // ─── Initialization ─────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-  await loadSettings();
+  await Promise.all([loadSettings(), loadMemory(), loadPrompts()]);
   applyTheme();
   setupEventListeners();
   checkConnection();
@@ -390,6 +420,8 @@ function populateSettingsForm() {
     document.getElementById('setting-debug-delay').value = settings.debugDelay ?? 500;
     document.getElementById('setting-debug-step').checked = !!settings.debugStepByStep;
   }
+  const approvalToggle = document.getElementById('setting-approval-mode');
+  if (approvalToggle) approvalToggle.checked = !!settings.approvalMode;
 }
 
 // ─── Event Listeners ────────────────────────────────────────────────────────────
@@ -421,9 +453,10 @@ function setupEventListeners() {
 
   // Settings panel
   btnSettings.addEventListener('click', () => {
-    document.getElementById('settings-panel').classList.toggle('hidden');
-    document.getElementById('sessions-panel').classList.add('hidden');
-    populateSettingsForm();
+    const panel = document.getElementById('settings-panel');
+    const wasHidden = panel.classList.contains('hidden');
+    closeAllPanels();
+    if (wasHidden) { panel.classList.remove('hidden'); populateSettingsForm(); }
   });
   btnCloseSettings.addEventListener('click', () => {
     document.getElementById('settings-panel').classList.add('hidden');
@@ -432,12 +465,88 @@ function setupEventListeners() {
   // Sessions panel
   document.getElementById('btn-sessions').addEventListener('click', () => {
     const panel = document.getElementById('sessions-panel');
-    panel.classList.toggle('hidden');
-    document.getElementById('settings-panel').classList.add('hidden');
-    if (!panel.classList.contains('hidden')) renderSessionsList();
+    const wasHidden = panel.classList.contains('hidden');
+    closeAllPanels();
+    if (wasHidden) { panel.classList.remove('hidden'); renderSessionsList(); }
   });
-  document.getElementById('btn-close-sessions').addEventListener('click', closeSessions);
+  document.getElementById('btn-close-sessions').addEventListener('click', () => document.getElementById('sessions-panel').classList.add('hidden'));
   document.getElementById('btn-new-session').addEventListener('click', startNewSession);
+
+  // Export buttons (inside sessions panel)
+  document.getElementById('btn-export-md').addEventListener('click', () => exportConversation('md'));
+  document.getElementById('btn-export-json').addEventListener('click', () => exportConversation('json'));
+
+  // History panel
+  document.getElementById('btn-history').addEventListener('click', () => {
+    const panel = document.getElementById('history-panel');
+    const wasHidden = panel.classList.contains('hidden');
+    closeAllPanels();
+    if (wasHidden) { panel.classList.remove('hidden'); renderHistoryPanel(); }
+  });
+  document.getElementById('btn-close-history').addEventListener('click', () => document.getElementById('history-panel').classList.add('hidden'));
+  document.getElementById('btn-clear-history').addEventListener('click', clearHistory);
+  document.getElementById('btn-export-history').addEventListener('click', () => {
+    if (actionHistory.length === 0) { addSystemMessage('No history to export.'); return; }
+    const blob = new Blob([JSON.stringify(actionHistory, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `browseclaw-history-${new Date().toISOString().split('T')[0]}.json`;
+    a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+
+  // Memory panel
+  document.getElementById('btn-memory').addEventListener('click', () => {
+    const panel = document.getElementById('memory-panel');
+    const wasHidden = panel.classList.contains('hidden');
+    closeAllPanels();
+    if (wasHidden) { panel.classList.remove('hidden'); renderMemoryPanel(); }
+  });
+  document.getElementById('btn-close-memory').addEventListener('click', () => document.getElementById('memory-panel').classList.add('hidden'));
+  document.getElementById('btn-memory-add').addEventListener('click', async () => {
+    const key = document.getElementById('memory-new-key').value.trim();
+    const value = document.getElementById('memory-new-value').value.trim();
+    if (!key || !value) return;
+    persistentMemory[key] = value.slice(0, 500);
+    await saveMemory();
+    document.getElementById('memory-new-key').value = '';
+    document.getElementById('memory-new-value').value = '';
+    renderMemoryPanel();
+  });
+
+  // Prompts panel
+  document.getElementById('btn-prompts').addEventListener('click', () => {
+    const panel = document.getElementById('prompts-panel');
+    const wasHidden = panel.classList.contains('hidden');
+    closeAllPanels();
+    if (wasHidden) { panel.classList.remove('hidden'); renderPromptsPanel(); }
+  });
+  document.getElementById('btn-close-prompts').addEventListener('click', () => document.getElementById('prompts-panel').classList.add('hidden'));
+
+  // Save prompt button — show when input has text
+  const savePromptBtn = document.getElementById('btn-save-prompt');
+  document.getElementById('user-input').addEventListener('input', () => {
+    const hasText = document.getElementById('user-input').value.trim().length > 0;
+    savePromptBtn.classList.toggle('hidden', !hasText);
+  });
+  savePromptBtn.addEventListener('click', () => {
+    const text = document.getElementById('user-input').value.trim();
+    if (text) showSavePromptDialog(text);
+  });
+
+  // Task queue buttons
+  document.getElementById('btn-task-continue').addEventListener('click', () => {
+    if (taskQueue && taskQueue.status === 'waiting') {
+      taskQueue.status = 'running';
+      runNextTaskStep();
+    }
+  });
+  document.getElementById('btn-task-stop').addEventListener('click', () => {
+    if (taskQueue) {
+      taskQueue = null;
+      document.getElementById('task-progress')?.classList.add('hidden');
+      addSystemMessage('Task queue stopped.');
+    }
+  });
 
   // Save settings
   btnSaveSettings.addEventListener('click', async () => {
@@ -448,6 +557,7 @@ function setupEventListeners() {
     settings.debugMode = document.getElementById('setting-debug-mode').checked;
     settings.debugDelay = parseInt(document.getElementById('setting-debug-delay').value) || 0;
     settings.debugStepByStep = document.getElementById('setting-debug-step').checked;
+    settings.approvalMode = document.getElementById('setting-approval-mode')?.checked ?? false;
     await saveSettings();
     updateModelContextWindow();
     showSettingsStatus('Settings saved!', 'success');
@@ -788,6 +898,9 @@ async function startNewSession() {
   currentSessionKey = 'chromeclaw-' + Date.now();
   visionMessageCount = 0;
   visionReminderShown = false;
+  approvalAllSession = false;
+  taskQueue = null;
+  document.getElementById('task-progress')?.classList.add('hidden');
   conversationHistory = [];
   const messages = document.getElementById('messages');
   messages.innerHTML = '';
@@ -906,9 +1019,22 @@ async function sendMessage(forceVision = false, editContext = null) {
   const text = editContext ? editContext.text : input.value.trim();
   if ((!text && !pendingImageAttachment) || isGenerating) return;
 
+  // Task queue detection — only on fresh sends (not edits or queue-driven sends)
+  if (!editContext && text) {
+    const steps = parseTaskSteps(text);
+    if (steps && steps.length > 1) {
+      input.value = '';
+      input.style.height = 'auto';
+      document.getElementById('btn-save-prompt')?.classList.add('hidden');
+      startTaskQueue(steps);
+      return;
+    }
+  }
+
   if (!editContext) {
     input.value = '';
     input.style.height = 'auto';
+    document.getElementById('btn-save-prompt')?.classList.add('hidden');
     // Add user message to chat with its history index (= current length, before push)
     const historyIndex = conversationHistory.length;
     addMessageBubble('user', text || '[Image]', historyIndex);
@@ -948,6 +1074,12 @@ async function sendMessage(forceVision = false, editContext = null) {
     }
   } else {
     messageText = `${SYSTEM_PROMPT}\n\nUser request: ${text}`;
+  }
+
+  // Inject persistent memory facts before sending
+  if (Object.keys(persistentMemory).length > 0) {
+    const facts = Object.entries(persistentMemory).map(([k, v]) => `${k}: ${v}`).join('\n');
+    messageText = `[Remembered facts:\n${facts}]\n\n` + messageText;
   }
 
   // Build attachments from pasted image and/or vision screenshot
@@ -1106,7 +1238,7 @@ async function runAgentLoop(messageText, attachments = null) {
       // Check for action blocks and execute them
       const actions = parseActions(finalContent);
       if (actions.length > 0) {
-        await executeActions(actions, client, sessionKey);
+        await executeActions(actions, client, sessionKey, 0);
       }
     }
 
@@ -1220,12 +1352,29 @@ function parseActions(text) {
   return actions;
 }
 
-async function executeActions(actions, client, sessionKey) {
+const MAX_ACTION_DEPTH = 20;
+
+async function executeActions(actions, client, sessionKey, depth = 0) {
+  // Hard stop — prevent runaway agentic loops
+  if (depth >= MAX_ACTION_DEPTH) {
+    addSystemMessage(`Action loop reached the ${MAX_ACTION_DEPTH}-round limit and was stopped.`);
+    return;
+  }
+
   const results = [];
 
   const delay = settings.debugMode ? (settings.debugDelay ?? 500) : 300;
 
   for (const action of actions) {
+    // Action approval — prompt user before destructive actions
+    if (settings.approvalMode && !approvalAllSession && DESTRUCTIVE_ACTIONS.has(action.action)) {
+      const decision = await requestApproval(action);
+      if (decision === 'cancel') {
+        results.push({ action: action.action, success: false, error: 'Cancelled by user' });
+        break;
+      }
+    }
+
     // Step-by-step: pause and wait for user to click Continue
     if (settings.debugMode && settings.debugStepByStep) {
       await pauseForStep(action);
@@ -1247,6 +1396,19 @@ async function executeActions(actions, client, sessionKey) {
       results.push({ action: action.action, success: false, error: err.message });
     }
 
+    // Log to action history
+    const lastResult = results[results.length - 1];
+    actionHistory.push({
+      id: Date.now(),
+      action: action.action,
+      params: { ...action },
+      success: lastResult.success,
+      error: lastResult.success ? null : lastResult.error,
+      timestamp: Date.now()
+    });
+    if (actionHistory.length > 200) actionHistory.shift();
+    updateHistoryBadge();
+
     // Show ripple for clicks, then clear overlays
     if (settings.debugMode) {
       const tab = await getActiveTab();
@@ -1256,7 +1418,7 @@ async function executeActions(actions, client, sessionKey) {
         await chrome.tabs.sendMessage(tab.id, { action: 'debug_clear' }).catch(() => {});
       }
     } else {
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise(r => setTimeout(r, 100));
     }
   }
 
@@ -1265,36 +1427,46 @@ async function executeActions(actions, client, sessionKey) {
   // Show subtle action summary in the UI
   addActionResultBubble(results);
 
-  // Build follow-up message with results and optional new screenshot
-  let followUp = `[Action results:\n${results.map(r =>
-    r.success ? `✓ ${r.action}: ${JSON.stringify(r.result).substring(0, 200)}` : `✗ ${r.action}: ${r.error}`
-  ).join('\n')}]`;
+  conversationHistory.push({ type: 'action_result', results });
 
-  // Only capture a follow-up screenshot if an action failed — success text is enough context.
-  // This prevents screenshots accumulating in the conversation on every action round.
-  let followUpAttachments = null;
+  // Navigation actions change page state in ways the AI cannot predict — always follow up.
+  // Data-entry actions (fill, type, scroll, check) are deterministic — skip follow-up on clean success.
+  const NAVIGATION_ACTIONS = new Set(['click', 'click_text', 'double_click', 'right_click', 'submit', 'press_key', 'open_tab', 'switch_tab', 'close_tab']);
   const hasFailure = results.some(r => !r.success);
-  if (settings.includeVision && hasFailure) {
-    await new Promise(r => setTimeout(r, 500)); // Wait for page to settle
+  const hasNavigation = results.some(r => r.success && NAVIGATION_ACTIONS.has(r.action));
+
+  // Fast path: all succeeded, no navigation, no vision — nothing uncertain, skip AI round-trip
+  if (!hasFailure && !hasNavigation && !settings.includeVision) {
+    return;
+  }
+
+  // Page has potentially changed — wait briefly then gather state
+  await new Promise(r => setTimeout(r, 300));
+
+  const resultLines = results.map(r =>
+    r.success ? `✓ ${r.action}: ${JSON.stringify(r.result).substring(0, 200)}` : `✗ ${r.action}: ${r.error}`
+  ).join('\n');
+
+  let pageStateNote = '';
+  try {
+    const tab = await getActiveTab();
+    if (tab) pageStateNote = `\n[Current page: ${tab.title} — ${tab.url}]`;
+  } catch {}
+
+  const continueHint = hasFailure
+    ? '\nSome actions failed. Review the errors and screenshot, then recover or try a different approach.'
+    : '\nReview the current page state. If the task is not yet complete, continue with your next step. If done, say so without any action blocks.';
+
+  let followUp = `[Action results:\n${resultLines}]${pageStateNote}${continueHint}`;
+
+  let followUpAttachments = null;
+  if (settings.includeVision) {
     const screenshot = await captureScreenshot();
     if (screenshot) {
       const base64Data = screenshot.replace(/^data:image\/\w+;base64,/, '');
-      followUpAttachments = [{
-        name: 'after-action.jpg',
-        content: base64Data,
-        encoding: 'base64',
-        mimeType: 'image/jpeg'
-      }];
-      followUp += '\n[Screenshot after actions attached.]';
+      followUpAttachments = [{ name: 'after-action.jpg', content: base64Data, encoding: 'base64', mimeType: 'image/jpeg' }];
+      followUp += '\n[Screenshot of current page attached.]';
     }
-  }
-
-  conversationHistory.push({ type: 'action_result', results });
-
-  // If all actions succeeded and no screenshot to send, skip the follow-up entirely —
-  // the agent's original message already explained the intent, no need to force another response.
-  if (!hasFailure && !followUpAttachments) {
-    return;
   }
 
   // Stream the agent's response to action results
@@ -1344,22 +1516,50 @@ async function executeActions(actions, client, sessionKey) {
     finalizeAssistantMessage(finalContent);
     conversationHistory.push({ role: 'assistant', content: finalContent });
 
-    // Recurse if the follow-up also contains actions (max depth handled by isGenerating)
+    // Recurse if the follow-up also contains actions
     const moreActions = parseActions(finalContent);
     if (moreActions.length > 0) {
-      await executeActions(moreActions, client, sessionKey);
+      await executeActions(moreActions, client, sessionKey, depth + 1);
     }
   }
 }
 
 async function executePageAction(action) {
+  const type = action.action;
+
+  // Memory actions — no tab access needed
+  if (type === 'memory_save') {
+    persistentMemory[action.key] = String(action.value || '').slice(0, 500);
+    await saveMemory();
+    return { saved: true };
+  }
+  if (type === 'memory_get') {
+    return { value: persistentMemory[action.key] ?? null };
+  }
+  if (type === 'memory_delete') {
+    delete persistentMemory[action.key];
+    await saveMemory();
+    return { deleted: true };
+  }
+
+  // Resolve iframe frame ID from src URL
+  if (type === 'resolve_frame_id') {
+    const frameId = await resolveFrameId(action.src);
+    return { frameId };
+  }
+
+  // Tab actions — routed via background service worker
+  const TAB_ACTIONS = new Set(['list_tabs', 'switch_tab', 'open_tab', 'close_tab']);
+  if (TAB_ACTIONS.has(type)) {
+    return chrome.runtime.sendMessage({ action: 'tabAction', tabAction: type, params: action });
+  }
+
   const tab = await getActiveTab();
   if (!tab || tab.url?.startsWith('chrome://')) {
     throw new Error('Cannot interact with this page');
   }
   await chrome.runtime.sendMessage({ action: 'ensureContentScript', tabId: tab.id });
 
-  const type = action.action;
   let msg = {};
 
   switch (type) {
@@ -1409,11 +1609,15 @@ async function executePageAction(action) {
     case 'drag':
       msg = { action: 'drag', selector: action.selector, fromX: action.fromX, fromY: action.fromY, toX: action.toX, toY: action.toY, steps: action.steps };
       break;
+    case 'query_frames':
+      msg = { action: 'query_frames' };
+      break;
     default:
       throw new Error(`Unknown action: ${type}`);
   }
 
-  const response = await chrome.tabs.sendMessage(tab.id, msg);
+  const msgOptions = action.frameId != null ? { frameId: action.frameId } : {};
+  const response = await chrome.tabs.sendMessage(tab.id, msg, msgOptions);
   if (response?.success) return response.data;
   throw new Error(response?.error || 'Action failed');
 }
@@ -2079,4 +2283,316 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// ─── Panel Management ────────────────────────────────────────────────────────
+function closeAllPanels() {
+  ['settings-panel', 'sessions-panel', 'history-panel', 'memory-panel', 'prompts-panel']
+    .forEach(id => document.getElementById(id)?.classList.add('hidden'));
+}
+
+// ─── Action Approval ─────────────────────────────────────────────────────────
+function requestApproval(action) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'edit-confirm-overlay';
+    overlay.innerHTML = `
+      <div class="edit-confirm-box">
+        <p><strong>Allow action: ${escapeHtml(action.action)}</strong></p>
+        <pre class="approval-params">${escapeHtml(JSON.stringify(action, null, 2))}</pre>
+        <div class="edit-confirm-btns">
+          <button class="edit-confirm-no">Cancel</button>
+          <button class="approval-allow-session btn-secondary">Allow All Session</button>
+          <button class="edit-confirm-yes">Allow</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('.edit-confirm-yes').addEventListener('click', () => { overlay.remove(); resolve('allow'); });
+    overlay.querySelector('.approval-allow-session').addEventListener('click', () => { approvalAllSession = true; overlay.remove(); resolve('allow'); });
+    overlay.querySelector('.edit-confirm-no').addEventListener('click', () => { overlay.remove(); resolve('cancel'); });
+  });
+}
+
+// ─── Action History ──────────────────────────────────────────────────────────
+function updateHistoryBadge() {
+  const badge = document.getElementById('history-badge');
+  if (!badge) return;
+  const count = actionHistory.length;
+  badge.textContent = count > 99 ? '99+' : String(count);
+  badge.classList.toggle('hidden', count === 0);
+}
+
+function renderHistoryPanel() {
+  const list = document.getElementById('history-list');
+  if (!list) return;
+  const countEl = document.getElementById('history-count');
+  list.innerHTML = '';
+  if (actionHistory.length === 0) {
+    if (countEl) countEl.textContent = '0 actions';
+    list.innerHTML = '<p style="font-size:12.5px;color:var(--text-muted);text-align:center;padding:20px 0;">No actions executed yet.</p>';
+    return;
+  }
+  if (countEl) countEl.textContent = `${actionHistory.length} action${actionHistory.length !== 1 ? 's' : ''}`;
+  [...actionHistory].reverse().forEach(entry => {
+    const date = new Date(entry.timestamp).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const item = document.createElement('div');
+    item.className = `history-item ${entry.success ? 'history-item-success' : 'history-item-fail'}`;
+    const detail = entry.success
+      ? JSON.stringify(entry.params || {}).substring(0, 120)
+      : (entry.error || 'failed');
+    item.innerHTML = `
+      <div class="history-item-header">
+        <span class="history-item-action">${escapeHtml(entry.action)}</span>
+        <span class="history-item-time">${date}</span>
+      </div>
+      <div class="history-item-detail">${escapeHtml(detail)}</div>`;
+    list.appendChild(item);
+  });
+}
+
+function clearHistory() {
+  actionHistory = [];
+  updateHistoryBadge();
+  renderHistoryPanel();
+}
+
+// ─── Task Queue ───────────────────────────────────────────────────────────────
+function parseTaskSteps(text) {
+  const match = text.match(/^(\d+\.\s+.+)(\n\d+\.\s+.+){1,}/m);
+  if (!match) return null;
+  const steps = [];
+  for (const line of text.split('\n')) {
+    if (/^\d+\.\s+.+/.test(line)) steps.push(line.replace(/^\d+\.\s+/, '').trim());
+  }
+  return steps.length >= 2 ? steps : null;
+}
+
+function updateTaskProgress() {
+  if (!taskQueue) return;
+  const label = document.getElementById('task-step-label');
+  if (label) label.textContent = `Step ${taskQueue.currentStep} of ${taskQueue.steps.length}`;
+}
+
+function startTaskQueue(steps) {
+  taskQueue = { steps, currentStep: 0, status: 'running' };
+  const progress = document.getElementById('task-progress');
+  if (progress) progress.classList.remove('hidden');
+  runNextTaskStep();
+}
+
+async function runNextTaskStep() {
+  if (!taskQueue) return;
+  if (taskQueue.currentStep >= taskQueue.steps.length) {
+    taskQueue = null;
+    document.getElementById('task-progress')?.classList.add('hidden');
+    addSystemMessage('All task steps completed.');
+    return;
+  }
+  const step = taskQueue.steps[taskQueue.currentStep];
+  taskQueue.currentStep++;
+  taskQueue.status = 'running';
+  updateTaskProgress();
+
+  document.getElementById('btn-task-continue')?.classList.add('hidden');
+  document.getElementById('btn-task-stop')?.classList.add('hidden');
+
+  const input = document.getElementById('user-input');
+  input.value = step;
+  await sendMessage();
+
+  if (taskQueue && taskQueue.currentStep < taskQueue.steps.length) {
+    taskQueue.status = 'waiting';
+    document.getElementById('btn-task-continue')?.classList.remove('hidden');
+    document.getElementById('btn-task-stop')?.classList.remove('hidden');
+  } else if (taskQueue) {
+    taskQueue = null;
+    document.getElementById('task-progress')?.classList.add('hidden');
+    addSystemMessage('All task steps completed.');
+  }
+}
+
+// ─── Persistent Memory ────────────────────────────────────────────────────────
+async function loadMemory() {
+  const stored = await chrome.storage.local.get('chromeclaw_memory');
+  persistentMemory = stored.chromeclaw_memory || {};
+  updateMemoryBadge();
+}
+
+async function saveMemory() {
+  await chrome.storage.local.set({ chromeclaw_memory: persistentMemory });
+  updateMemoryBadge();
+}
+
+function updateMemoryBadge() {
+  const badge = document.getElementById('memory-badge');
+  if (!badge) return;
+  const count = Object.keys(persistentMemory).length;
+  badge.textContent = String(count);
+  badge.classList.toggle('hidden', count === 0);
+}
+
+function renderMemoryPanel() {
+  const list = document.getElementById('memory-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const entries = Object.entries(persistentMemory);
+  if (entries.length === 0) {
+    list.innerHTML = '<p style="font-size:12.5px;color:var(--text-muted);text-align:center;padding:20px 0;">No memories saved yet. Ask the AI to remember something.</p>';
+    return;
+  }
+  if (entries.length > 20) {
+    const warn = document.createElement('div');
+    warn.style.cssText = 'font-size:11.5px;color:var(--error);padding:6px 10px;background:rgba(239,68,68,0.1);border-radius:6px;margin-bottom:8px;';
+    warn.textContent = `⚠️ ${entries.length} memories stored — too many may inflate context.`;
+    list.appendChild(warn);
+  }
+  entries.forEach(([key, value]) => {
+    const item = document.createElement('div');
+    item.className = 'memory-item';
+    item.innerHTML = `
+      <div class="memory-item-content">
+        <span class="memory-item-key">${escapeHtml(key)}</span>
+        <span class="memory-item-value">${escapeHtml(value)}</span>
+      </div>
+      <button class="btn-memory-delete" title="Delete">✕</button>`;
+    item.querySelector('.btn-memory-delete').addEventListener('click', async () => {
+      delete persistentMemory[key];
+      await saveMemory();
+      renderMemoryPanel();
+    });
+    list.appendChild(item);
+  });
+}
+
+// ─── Conversation Export ──────────────────────────────────────────────────────
+function exportConversation(format) {
+  if (conversationHistory.length === 0) {
+    addSystemMessage('Nothing to export.');
+    return;
+  }
+  const date = new Date().toISOString().split('T')[0];
+  let content, mimeType, filename;
+  if (format === 'json') {
+    content = JSON.stringify(conversationHistory, null, 2);
+    mimeType = 'application/json';
+    filename = `browseclaw-export-${date}.json`;
+  } else {
+    const lines = [];
+    for (const msg of conversationHistory) {
+      if (msg.isInternal) continue;
+      if (msg.role === 'user' && msg.text && msg.text !== '[action results]') {
+        lines.push(`**User:** ${msg.text}\n`);
+      } else if (msg.role === 'assistant') {
+        const text = extractTextContent(msg.content || '');
+        if (text) lines.push(`**Assistant:** ${text}\n`);
+      } else if (msg.type === 'action_result') {
+        const summary = (msg.results || []).map(r => `  - ${r.success ? '✓' : '✗'} ${r.action}`).join('\n');
+        if (summary) lines.push(`*Actions:*\n${summary}\n`);
+      }
+    }
+    content = `# BrowseClaw Export — ${date}\n\n` + lines.join('\n');
+    mimeType = 'text/markdown';
+    filename = `browseclaw-export-${date}.md`;
+  }
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ─── Prompt Library ───────────────────────────────────────────────────────────
+async function loadPrompts() {
+  const stored = await chrome.storage.local.get('chromeclaw_prompts');
+  savedPrompts = stored.chromeclaw_prompts || [];
+}
+
+async function savePrompts() {
+  await chrome.storage.local.set({ chromeclaw_prompts: savedPrompts });
+}
+
+async function savePrompt(name, text) {
+  savedPrompts.push({ id: Date.now(), name, text, createdAt: Date.now() });
+  await savePrompts();
+}
+
+async function deletePrompt(id) {
+  savedPrompts = savedPrompts.filter(p => p.id !== id);
+  await savePrompts();
+}
+
+function renderPromptsPanel() {
+  const list = document.getElementById('prompts-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (savedPrompts.length === 0) {
+    list.innerHTML = '<p style="font-size:12.5px;color:var(--text-muted);text-align:center;padding:20px 0;">No saved prompts. Type a message and click the bookmark icon.</p>';
+    return;
+  }
+  savedPrompts.forEach(prompt => {
+    const item = document.createElement('div');
+    item.className = 'prompt-item';
+    const preview = prompt.text.length > 80 ? prompt.text.substring(0, 80) + '...' : prompt.text;
+    item.innerHTML = `
+      <div class="prompt-item-content">
+        <div class="prompt-item-name">${escapeHtml(prompt.name)}</div>
+        <div class="prompt-item-preview">${escapeHtml(preview)}</div>
+      </div>
+      <div class="prompt-item-actions">
+        <button class="btn-prompt-use">Use</button>
+        <button class="btn-prompt-delete">Delete</button>
+      </div>`;
+    item.querySelector('.btn-prompt-use').addEventListener('click', () => {
+      document.getElementById('user-input').value = prompt.text;
+      autoResizeInput();
+      closeAllPanels();
+      document.getElementById('user-input').focus();
+    });
+    item.querySelector('.btn-prompt-delete').addEventListener('click', async () => {
+      await deletePrompt(prompt.id);
+      renderPromptsPanel();
+    });
+    list.appendChild(item);
+  });
+}
+
+function showSavePromptDialog(text) {
+  const overlay = document.createElement('div');
+  overlay.className = 'edit-confirm-overlay';
+  overlay.innerHTML = `
+    <div class="edit-confirm-box">
+      <p><strong>Save Prompt</strong></p>
+      <input type="text" id="prompt-name-input" placeholder="Prompt name..." style="width:100%;margin:10px 0;padding:8px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:13px;">
+      <div class="edit-confirm-btns">
+        <button class="edit-confirm-no">Cancel</button>
+        <button class="edit-confirm-yes">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const nameInput = overlay.querySelector('#prompt-name-input');
+  nameInput.focus();
+  nameInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') overlay.querySelector('.edit-confirm-yes').click();
+    if (e.key === 'Escape') overlay.querySelector('.edit-confirm-no').click();
+  });
+  overlay.querySelector('.edit-confirm-no').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('.edit-confirm-yes').addEventListener('click', async () => {
+    const name = nameInput.value.trim() || 'Untitled';
+    overlay.remove();
+    await savePrompt(name, text);
+    addSystemMessage(`Prompt "${name}" saved.`);
+  });
+}
+
+// ─── Iframe Support ───────────────────────────────────────────────────────────
+async function resolveFrameId(src) {
+  const tab = await getActiveTab();
+  if (!tab) return null;
+  const frames = await new Promise(r =>
+    chrome.runtime.sendMessage({ action: 'getFrameIds', tabId: tab.id }, r)
+  );
+  const match = frames?.find(f => f.url === src);
+  return match?.frameId ?? null;
 }
