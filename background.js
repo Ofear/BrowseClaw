@@ -5,6 +5,28 @@
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
   .catch((error) => console.error('Failed to set panel behavior:', error));
 
+// ─── Context Menu ────────────────────────────────────────────────────────────
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({
+    id: 'browseclaw-ask',
+    title: 'Ask BrowseClaw: "%s"',
+    contexts: ['selection']
+  });
+});
+
+chrome.contextMenus.onClicked.addListener((info) => {
+  if (info.menuItemId === 'browseclaw-ask' && info.selectionText) {
+    chrome.storage.local.set({ browseclaw_selection: { text: info.selectionText, ts: Date.now() } });
+  }
+});
+
+// ─── Keyboard Shortcut ───────────────────────────────────────────────────────
+chrome.commands.onCommand.addListener((command) => {
+  if (command === 'focus-input') {
+    chrome.runtime.sendMessage({ action: 'focusInput' }).catch(() => {});
+  }
+});
+
 // ─── Message Handler ────────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'ensureContentScript') {

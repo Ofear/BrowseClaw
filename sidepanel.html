@@ -35,6 +35,10 @@
       <button id="btn-prompts" class="icon-btn" title="Saved Prompts">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M11 2H5a1 1 0 00-1 1v10l4-2 4 2V3a1 1 0 00-1-1z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
       </button>
+      <button id="btn-artifacts" class="icon-btn" title="Saved Artifacts" style="position:relative;">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 4V3a1 1 0 011-1h3a1 1 0 011 1v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M5 8h6M5 10.5h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <span id="artifacts-badge" class="header-badge hidden">0</span>
+      </button>
       <button id="btn-settings" class="icon-btn" title="Settings">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 10a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" stroke-width="1.5"/><path d="M13.05 10a1.1 1.1 0 00.22 1.213l.04.04a1.334 1.334 0 11-1.887 1.887l-.04-.04A1.1 1.1 0 0010 13.32v.013A1.333 1.333 0 017.333 14v-.073A1.1 1.1 0 006 12.82a1.1 1.1 0 00-1.213.22l-.04.04a1.334 1.334 0 11-1.887-1.887l.04-.04A1.1 1.1 0 003.12 10a1.1 1.1 0 00-1.107-1.1H2A1.333 1.333 0 012 6.567h.073A1.1 1.1 0 003.18 5.46a1.1 1.1 0 00-.22-1.213l-.04-.04a1.334 1.334 0 111.887-1.887l.04.04A1.1 1.1 0 006 2.58V2.567a1.333 1.333 0 012.667 0V2.64A1.1 1.1 0 0010 3.18a1.1 1.1 0 001.213-.22l.04-.04a1.334 1.334 0 111.887 1.887l-.04.04A1.1 1.1 0 0012.88 6v.107a1.1 1.1 0 001.107 1.1H14a1.333 1.333 0 010 2.666h-.073A1.1 1.1 0 0013.05 10z" stroke="currentColor" stroke-width="1.5"/></svg>
       </button>
@@ -99,6 +103,7 @@
       <div id="context-meter" data-level="safe" title="">
         <span class="ctx-dot"></span>
         <span id="ctx-label">0 msgs</span>
+        <button id="btn-compact" class="compact-btn hidden" title="Compact context: summarize history to free up space">Compact</button>
       </div>
     </div>
     <div class="input-row">
@@ -106,6 +111,7 @@
       <button id="btn-save-prompt" class="icon-btn hidden" title="Save as prompt">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M11 2H5a1 1 0 00-1 1v10l4-2 4 2V3a1 1 0 00-1-1z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
       </button>
+      <button id="btn-plan" class="plan-btn" title="Plan: break task into steps then execute">Plan</button>
       <button id="btn-send" title="Send message (Enter)">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
@@ -262,6 +268,23 @@
         <button id="btn-memory-add" class="btn-secondary">Add</button>
       </div>
       <div id="memory-list"></div>
+    </div>
+  </div>
+
+  <!-- Artifacts Panel -->
+  <div id="artifacts-panel" class="hidden">
+    <div class="settings-header">
+      <h2>Saved Artifacts</h2>
+      <button id="btn-close-artifacts" class="icon-btn">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M12 4L4 12M4 4l8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="sessions-body">
+      <div class="history-toolbar">
+        <span id="artifacts-count">0 artifacts</span>
+        <button id="btn-clear-artifacts" class="btn-secondary">Clear All</button>
+      </div>
+      <div id="artifacts-list"></div>
     </div>
   </div>
 

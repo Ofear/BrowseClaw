@@ -1448,3 +1448,151 @@ body {
   transition: all var(--transition);
 }
 .btn-prompt-delete:hover { color: var(--error); border-color: var(--error); }
+
+/* ─── Plan Button ────────────────────────────────────────────────────────── */
+.plan-btn {
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.plan-btn:hover {
+  background: var(--accent-subtle);
+}
+
+/* ─── Compact Button ─────────────────────────────────────────────────────── */
+.compact-btn {
+  margin-left: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--accent-subtle);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  color: var(--accent);
+  cursor: pointer;
+  transition: all var(--transition);
+  vertical-align: middle;
+}
+.compact-btn:hover {
+  background: var(--accent);
+  color: white;
+}
+.compact-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ─── Code Block Save Button ─────────────────────────────────────────────── */
+.code-block-wrap {
+  position: relative;
+}
+.code-block-wrap pre {
+  margin: 0;
+}
+.artifact-save-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition), background var(--transition);
+}
+.code-block-wrap:hover .artifact-save-btn {
+  opacity: 1;
+}
+.artifact-save-btn:hover {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+/* ─── Artifacts Panel ────────────────────────────────────────────────────── */
+#artifacts-panel {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--bg-primary);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+#artifacts-panel.hidden { display: none; }
+
+.artifact-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.artifact-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.artifact-item-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+}
+.artifact-item-lang {
+  font-size: 11px;
+  padding: 2px 6px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+}
+.artifact-item-preview {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  background: var(--code-bg, var(--bg-secondary));
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin: 0 0 8px 0;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 80px;
+}
+.artifact-item-actions {
+  display: flex;
+  gap: 6px;
+}
+.artifact-item-actions button {
+  padding: 4px 10px;
+  font-size: 11.5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.artifact-item-actions button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.btn-artifact-delete:hover {
+  color: var(--error) !important;
+  border-color: var(--error) !important;
+}

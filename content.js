@@ -710,4 +710,67 @@
     highlights.forEach(h => h.remove());
     highlights.length = 0;
   }
+
+  // ─── Text Selection Floating Button ──────────────────────────────────────────
+  let _floatBtn = null;
+
+  function removeFloatBtn() {
+    if (_floatBtn) { _floatBtn.remove(); _floatBtn = null; }
+  }
+
+  document.addEventListener('mouseup', () => {
+    setTimeout(() => {
+      const selection = window.getSelection();
+      const text = selection?.toString().trim();
+      removeFloatBtn();
+      if (!text || text.length < 3) return;
+      // Don't show inside an iframe that is the sidepanel
+      if (window !== window.top) return;
+
+      try {
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        if (!rect.width && !rect.height) return;
+
+        const btn = document.createElement('button');
+        btn.id = '__browseclaw_float__';
+        btn.textContent = '🦞';
+        btn.title = 'Ask BrowseClaw';
+        btn.style.cssText = [
+          'position:fixed',
+          `left:${Math.min(rect.right + 6, window.innerWidth - 44)}px`,
+          `top:${Math.max(rect.top - 40, 8)}px`,
+          'z-index:2147483647',
+          'background:#FF6B35',
+          'border:none',
+          'border-radius:50%',
+          'width:30px',
+          'height:30px',
+          'font-size:15px',
+          'cursor:pointer',
+          'box-shadow:0 2px 8px rgba(0,0,0,0.35)',
+          'display:flex',
+          'align-items:center',
+          'justify-content:center',
+          'padding:0',
+          'line-height:1',
+          'transition:transform 0.12s ease',
+        ].join(';');
+        btn.addEventListener('mouseenter', () => { btn.style.transform = 'scale(1.15)'; });
+        btn.addEventListener('mouseleave', () => { btn.style.transform = ''; });
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          chrome.storage.local.set({ browseclaw_selection: { text, ts: Date.now() } });
+          removeFloatBtn();
+        });
+        document.body.appendChild(btn);
+        _floatBtn = btn;
+      } catch {}
+    }, 10);
+  });
+
+  document.addEventListener('mousedown', (e) => {
+    if (_floatBtn && e.target !== _floatBtn) removeFloatBtn();
+  });
 })();

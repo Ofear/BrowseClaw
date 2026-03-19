@@ -36,6 +36,62 @@ let actionHistory = [];           // cap at 200 entries
 let taskQueue = null;             // { steps, currentStep, status }
 let persistentMemory = {};        // { key: value }
 let savedPrompts = [];            // [{ id, name, text, createdAt }]
+let savedArtifacts = [];          // [{ id, name, lang, code, createdAt }]
+
+// ─── Site-Specific Quick Prompts ─────────────────────────────────────────────
+const SITE_PROMPTS = {
+  'github.com': [
+    { label: 'Summarize PR', prompt: 'Summarize this pull request: what does it change and why?' },
+    { label: 'Review Code', prompt: 'Review the code on this page and point out any issues or improvements' },
+    { label: 'Explain Issue', prompt: 'Explain this GitHub issue in simple terms and suggest a fix' },
+    { label: 'README Summary', prompt: 'Summarize this README: what does this project do and how do I use it?' },
+  ],
+  'youtube.com': [
+    { label: 'Video Summary', prompt: 'Summarize this YouTube video based on the title, description and any visible transcript' },
+    { label: 'Key Points', prompt: 'What are the key takeaways or main points of this video?' },
+    { label: 'Comments Mood', prompt: 'What is the overall sentiment of the comments on this video?' },
+  ],
+  'linkedin.com': [
+    { label: 'Profile Summary', prompt: 'Summarize this LinkedIn profile: role, skills, and experience highlights' },
+    { label: 'Post Analysis', prompt: 'Analyze this LinkedIn post: what is the key message and how is it positioned?' },
+    { label: 'Job Fit', prompt: 'Based on this job posting, what skills and experience are most important?' },
+  ],
+  'twitter.com': [
+    { label: 'Thread Summary', prompt: 'Summarize this Twitter/X thread in a few sentences' },
+    { label: 'Sentiment', prompt: 'What is the overall sentiment and key opinion in this tweet or thread?' },
+  ],
+  'x.com': [
+    { label: 'Thread Summary', prompt: 'Summarize this Twitter/X thread in a few sentences' },
+    { label: 'Sentiment', prompt: 'What is the overall sentiment and key opinion in this tweet or thread?' },
+  ],
+  'reddit.com': [
+    { label: 'Post Summary', prompt: 'Summarize this Reddit post and the top comments' },
+    { label: 'Top Opinions', prompt: 'What are the most upvoted opinions in this Reddit thread?' },
+  ],
+  'gmail.com': [
+    { label: 'Summarize Email', prompt: 'Summarize this email: key points, action items, and sender intent' },
+    { label: 'Draft Reply', prompt: 'Draft a professional reply to this email' },
+    { label: 'Action Items', prompt: 'List all action items or tasks mentioned in this email' },
+  ],
+  'docs.google.com': [
+    { label: 'Doc Summary', prompt: 'Summarize this document: main topics, key points, and conclusions' },
+    { label: 'Find Issues', prompt: 'Review this document for clarity, grammar, and logical issues' },
+    { label: 'Extract Data', prompt: 'Extract all key data, numbers, and facts from this document' },
+  ],
+  'amazon.com': [
+    { label: 'Product Summary', prompt: 'Summarize this Amazon product: key features, pros and cons' },
+    { label: 'Review Analysis', prompt: 'Analyze the customer reviews: overall sentiment and common complaints' },
+    { label: 'Compare', prompt: 'What are the most important features to compare when buying this type of product?' },
+  ],
+  'notion.so': [
+    { label: 'Page Summary', prompt: 'Summarize this Notion page: main content and key takeaways' },
+    { label: 'Extract Tasks', prompt: 'Extract all tasks, to-dos, and action items from this page' },
+  ],
+  'web.whatsapp.com': [
+    { label: 'Chat Summary', prompt: 'Summarize the recent messages visible in this WhatsApp chat' },
+    { label: 'Draft Reply', prompt: 'Draft a friendly reply to the last message in this conversation' },
+  ],
+};
 
 const DESTRUCTIVE_ACTIONS = new Set([
   'click','click_text','fill','type','type_keyboard','select','check',
@@ -359,7 +415,7 @@ class OpenClawClient {
 
 // ─── Initialization ─────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-  await Promise.all([loadSettings(), loadMemory(), loadPrompts()]);
+  await Promise.all([loadSettings(), loadMemory(), loadPrompts(), loadArtifacts()]);
   applyTheme();
   setupEventListeners();
   checkConnection();
@@ -371,6 +427,37 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Paste image support
   input.addEventListener('paste', handleImagePaste);
+
+  // Listen for text selection from context menu or floating button
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.browseclaw_selection) {
+      const { text } = changes.browseclaw_selection.newValue || {};
+      if (text) {
+        const inp = document.getElementById('user-input');
+        inp.value = text;
+        autoResizeInput();
+        inp.focus();
+        document.getElementById('btn-save-prompt')?.classList.remove('hidden');
+        // Clear the storage key so it doesn't retrigger
+        chrome.storage.local.remove('browseclaw_selection');
+      }
+    }
+  });
+
+  // Listen for keyboard shortcut focus command from background
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message.action === 'focusInput') {
+      closeAllPanels();
+      document.getElementById('user-input')?.focus();
+    }
+  });
+
+  // Update quick actions for the current tab on load and tab change
+  updateQuickActions();
+  chrome.tabs?.onActivated?.addListener(() => updateQuickActions());
+  chrome.tabs?.onUpdated?.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === 'complete') updateQuickActions();
+  });
 });
 
 async function loadSettings() {
@@ -533,6 +620,36 @@ function setupEventListeners() {
     if (text) showSavePromptDialog(text);
   });
 
+  // Compact button
+  document.getElementById('btn-compact')?.addEventListener('click', compactContext);
+
+  // Plan button
+  document.getElementById('btn-plan')?.addEventListener('click', sendWithPlanning);
+
+  // Artifacts panel
+  document.getElementById('btn-artifacts').addEventListener('click', () => {
+    const panel = document.getElementById('artifacts-panel');
+    const wasHidden = panel.classList.contains('hidden');
+    closeAllPanels();
+    if (wasHidden) { panel.classList.remove('hidden'); renderArtifactsPanel(); }
+  });
+  document.getElementById('btn-close-artifacts').addEventListener('click', () => document.getElementById('artifacts-panel').classList.add('hidden'));
+  document.getElementById('btn-clear-artifacts').addEventListener('click', async () => {
+    savedArtifacts = [];
+    await saveArtifacts();
+    renderArtifactsPanel();
+  });
+
+  // Artifact save (event delegation on messages)
+  document.getElementById('messages').addEventListener('click', (e) => {
+    const saveBtn = e.target.closest('.artifact-save-btn');
+    if (saveBtn) {
+      const code = decodeURIComponent(saveBtn.dataset.code || '');
+      const lang = saveBtn.dataset.lang || '';
+      saveArtifact(code, lang);
+    }
+  });
+
   // Task queue buttons
   document.getElementById('btn-task-continue').addEventListener('click', () => {
     if (taskQueue && taskQueue.status === 'waiting') {
@@ -655,6 +772,141 @@ function setupEventListeners() {
   modelInput.addEventListener('dblclick', () => {
     modelSelect.parentElement.classList.remove('custom-mode');
   });
+}
+
+// ─── Site-specific Quick Actions ────────────────────────────────────────────────
+async function updateQuickActions() {
+  const bar = document.getElementById('quick-actions');
+  if (!bar) return;
+
+  let hostname = '';
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const url = tabs[0]?.url;
+    if (url) hostname = new URL(url).hostname.replace(/^www\./, '');
+  } catch {}
+
+  const siteKey = Object.keys(SITE_PROMPTS).find(k => hostname.endsWith(k));
+  const prompts = siteKey ? SITE_PROMPTS[siteKey] : null;
+
+  bar.innerHTML = '';
+  if (prompts) {
+    prompts.forEach(({ label, prompt }) => {
+      const btn = document.createElement('button');
+      btn.className = 'quick-btn';
+      btn.dataset.prompt = prompt;
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        document.getElementById('user-input').value = prompt;
+        sendMessage();
+      });
+      bar.appendChild(btn);
+    });
+  } else {
+    // Default quick actions
+    [
+      { label: 'Summarize', prompt: 'Summarize this page concisely' },
+      { label: 'Extract Data', prompt: 'Extract all the key data from this page into a structured format' },
+      { label: 'Scan Forms', prompt: 'List and describe all the forms and interactive elements on this page' },
+      { label: 'Actions', prompt: 'What can I do on this page? List the main actions available' },
+      { label: 'Describe (Vision)', prompt: 'Take a screenshot of this page and describe what you see in detail', vision: true },
+    ].forEach(({ label, prompt, vision }) => {
+      const btn = document.createElement('button');
+      btn.className = 'quick-btn';
+      btn.dataset.prompt = prompt;
+      if (vision) btn.dataset.vision = 'true';
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        document.getElementById('user-input').value = prompt;
+        sendMessage(vision === true);
+      });
+      bar.appendChild(btn);
+    });
+  }
+}
+
+// ─── Context Compaction ──────────────────────────────────────────────────────────
+async function compactContext() {
+  const btn = document.getElementById('btn-compact');
+  if (btn) { btn.disabled = true; btn.textContent = 'Compacting…'; }
+
+  const msgs = conversationHistory.filter(m =>
+    (m.role === 'user' || m.role === 'assistant') && !m.isInternal
+  );
+  if (msgs.length < 4) {
+    addSystemMessage('Not enough history to compact.');
+    if (btn) { btn.disabled = false; btn.textContent = 'Compact'; }
+    return;
+  }
+
+  // Build a compact summary request
+  const historyText = msgs.map(m => {
+    const text = m.role === 'user'
+      ? (m.text || '')
+      : extractTextContent(m.content || '');
+    return `${m.role === 'user' ? 'User' : 'Assistant'}: ${text.substring(0, 800)}`;
+  }).join('\n\n');
+
+  const compactPrompt = `Please create a concise summary of the following conversation history. Preserve all important context, facts, decisions, and action results. The summary should allow the conversation to continue naturally.
+
+${historyText}
+
+Return ONLY the summary paragraph(s), no preamble.`;
+
+  addSystemMessage('Compacting context…');
+
+  try {
+    const client = await ensureConnected();
+    const tempKey = 'compact-' + Date.now();
+    let summary = '';
+
+    await new Promise((resolve, reject) => {
+      client.onEvent = (event) => {
+        if (event.payload?.sessionKey !== tempKey) return;
+        const state = event.payload?.state;
+        const delta = event.payload?.message?.content;
+        if (Array.isArray(delta)) {
+          delta.forEach(c => { if (c.type === 'text') summary += c.text; });
+        } else if (typeof delta === 'string') {
+          summary += delta;
+        }
+        if (state === 'final' || state === 'aborted' || state === 'error') resolve();
+      };
+      client.request('chat.send', {
+        sessionKey: tempKey,
+        message: compactPrompt,
+        deliver: false
+      }).catch(reject);
+      setTimeout(resolve, 20000);
+    });
+
+    if (!summary) throw new Error('No summary returned');
+
+    // Replace history with compact version
+    conversationHistory = [{
+      role: 'assistant',
+      content: `[Context summary — ${msgs.length} messages compacted]\n\n${summary}`,
+      isInternal: false,
+      compacted: true
+    }];
+
+    // Rotate session key so the server starts fresh
+    currentSessionKey = 'chromeclaw-' + Date.now();
+    visionMessageCount = 0;
+
+    // Re-render messages
+    const messagesEl = document.getElementById('messages');
+    messagesEl.innerHTML = '';
+    addMessageBubble('assistant', conversationHistory[0].content);
+    addSystemMessage('Context compacted. Conversation continues from summary above.');
+
+    await saveChat();
+    updateContextMeter();
+  } catch (err) {
+    addSystemMessage(`Compaction failed: ${err.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Compact'; }
+  }
 }
 
 // ─── Theme ──────────────────────────────────────────────────────────────────────
@@ -807,6 +1059,9 @@ function updateContextMeter() {
   label.textContent = labelText;
   meter.dataset.level = level;
   meter.title = `~${kChars}k chars estimated (${historyChars} in history + ~${Math.round(userCount * pageCtxPerMsg / 1000)}k page ctx)\n${modelContextWindow ? `Model context window: ${Math.round(modelContextWindow / 4)}k tokens\n` : 'Model context window: unknown — fetch models in settings\n'}${hintLine}`;
+
+  // Show compact button when context is warn/danger
+  document.getElementById('btn-compact')?.classList.toggle('hidden', level === 'safe');
 }
 
 async function restoreChat() {
@@ -2196,7 +2451,8 @@ function renderMarkdown(text) {
       actionItems.push({ summary, code: code.trim() });
       codeBlocks.push(`\x00ACTION:${aIdx}\x00`);
     } else {
-      codeBlocks.push(`<pre><code class="lang-${lang}">${code.trim()}</code></pre>`);
+      const escapedForAttr = encodeURIComponent(code.trim());
+      codeBlocks.push(`<div class="code-block-wrap"><pre><code class="lang-${lang}">${code.trim()}</code></pre><button class="artifact-save-btn" data-code="${escapedForAttr}" data-lang="${lang}" title="Save as artifact">Save</button></div>`);
     }
     return `\x00CODEBLOCK${idx}\x00`;
   });
@@ -2287,7 +2543,7 @@ function escapeHtml(text) {
 
 // ─── Panel Management ────────────────────────────────────────────────────────
 function closeAllPanels() {
-  ['settings-panel', 'sessions-panel', 'history-panel', 'memory-panel', 'prompts-panel']
+  ['settings-panel', 'sessions-panel', 'history-panel', 'memory-panel', 'prompts-panel', 'artifacts-panel']
     .forEach(id => document.getElementById(id)?.classList.add('hidden'));
 }
 
@@ -2501,6 +2757,136 @@ function exportConversation(format) {
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ─── Multi-step Planner ───────────────────────────────────────────────────────
+async function sendWithPlanning() {
+  const input = document.getElementById('user-input');
+  const text = input.value.trim();
+  if (!text || isGenerating) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+  document.getElementById('btn-save-prompt')?.classList.add('hidden');
+
+  addMessageBubble('user', `[Plan] ${text}`, conversationHistory.length);
+  addSystemMessage('Planning steps…');
+
+  try {
+    const client = await ensureConnected();
+    const planKey = 'plan-' + Date.now();
+    let planText = '';
+
+    await new Promise((resolve, reject) => {
+      client.onEvent = (event) => {
+        if (event.payload?.sessionKey !== planKey) return;
+        const state = event.payload?.state;
+        const delta = event.payload?.message?.content;
+        if (Array.isArray(delta)) {
+          delta.forEach(c => { if (c.type === 'text') planText += c.text; });
+        } else if (typeof delta === 'string') {
+          planText += delta;
+        }
+        if (state === 'final' || state === 'aborted' || state === 'error') resolve();
+      };
+      client.request('chat.send', {
+        sessionKey: planKey,
+        message: `Break the following task into a numbered list of clear, actionable steps (3-8 steps). Each step should be a single complete action. Return ONLY the numbered list, no preamble or explanation.\n\nTask: ${text}`,
+        deliver: false
+      }).catch(reject);
+      setTimeout(resolve, 20000);
+    });
+
+    const steps = parseTaskSteps(planText);
+    if (!steps || steps.length < 2) {
+      // Couldn't parse a plan — just send normally
+      addSystemMessage('Could not generate a plan. Sending as a single message.');
+      document.getElementById('user-input').value = text;
+      sendMessage();
+      return;
+    }
+
+    addMessageBubble('assistant', `**Plan:**\n${steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`);
+    addSystemMessage(`Plan ready (${steps.length} steps). Starting execution…`);
+    startTaskQueue(steps);
+  } catch (err) {
+    addSystemMessage(`Planning failed: ${err.message}`);
+  }
+}
+
+// ─── Artifacts ────────────────────────────────────────────────────────────────
+async function loadArtifacts() {
+  const stored = await chrome.storage.local.get('chromeclaw_artifacts');
+  savedArtifacts = stored.chromeclaw_artifacts || [];
+  updateArtifactsBadge();
+}
+
+async function saveArtifacts() {
+  await chrome.storage.local.set({ chromeclaw_artifacts: savedArtifacts });
+  updateArtifactsBadge();
+}
+
+async function saveArtifact(code, lang) {
+  const name = `${lang || 'code'}-${new Date().toISOString().substring(0, 16).replace('T', ' ')}`;
+  savedArtifacts.unshift({ id: Date.now(), name, lang: lang || '', code, createdAt: Date.now() });
+  if (savedArtifacts.length > 50) savedArtifacts = savedArtifacts.slice(0, 50);
+  await saveArtifacts();
+  addSystemMessage(`Artifact saved: ${name}`);
+}
+
+function updateArtifactsBadge() {
+  const badge = document.getElementById('artifacts-badge');
+  if (!badge) return;
+  const count = savedArtifacts.length;
+  badge.textContent = count > 99 ? '99+' : String(count);
+  badge.classList.toggle('hidden', count === 0);
+}
+
+function renderArtifactsPanel() {
+  const list = document.getElementById('artifacts-list');
+  const countEl = document.getElementById('artifacts-count');
+  if (!list) return;
+  list.innerHTML = '';
+  if (countEl) countEl.textContent = `${savedArtifacts.length} artifact${savedArtifacts.length !== 1 ? 's' : ''}`;
+  if (savedArtifacts.length === 0) {
+    list.innerHTML = '<p style="font-size:12.5px;color:var(--text-muted);text-align:center;padding:20px 0;">No artifacts saved. Click Save on any code block in the chat.</p>';
+    return;
+  }
+  savedArtifacts.forEach(artifact => {
+    const item = document.createElement('div');
+    item.className = 'artifact-item';
+    const preview = artifact.code.length > 120 ? artifact.code.substring(0, 120) + '…' : artifact.code;
+    item.innerHTML = `
+      <div class="artifact-item-header">
+        <span class="artifact-item-name">${escapeHtml(artifact.name)}</span>
+        ${artifact.lang ? `<span class="artifact-item-lang">${escapeHtml(artifact.lang)}</span>` : ''}
+      </div>
+      <pre class="artifact-item-preview">${escapeHtml(preview)}</pre>
+      <div class="artifact-item-actions">
+        <button class="btn-artifact-copy">Copy</button>
+        <button class="btn-artifact-download">Download</button>
+        <button class="btn-artifact-delete">Delete</button>
+      </div>`;
+    item.querySelector('.btn-artifact-copy').addEventListener('click', () => {
+      navigator.clipboard.writeText(artifact.code).then(() => addSystemMessage('Copied to clipboard.'));
+    });
+    item.querySelector('.btn-artifact-download').addEventListener('click', () => {
+      const ext = artifact.lang || 'txt';
+      const blob = new Blob([artifact.code], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${artifact.name}.${ext}`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+    item.querySelector('.btn-artifact-delete').addEventListener('click', async () => {
+      savedArtifacts = savedArtifacts.filter(a => a.id !== artifact.id);
+      await saveArtifacts();
+      renderArtifactsPanel();
+    });
+    list.appendChild(item);
+  });
 }
 
 // ─── Prompt Library ───────────────────────────────────────────────────────────

@@ -10,8 +10,19 @@
     "scripting",
     "storage",
     "tabs",
-    "webNavigation"
+    "webNavigation",
+    "contextMenus"
   ],
+
+  "commands": {
+    "focus-input": {
+      "suggested_key": {
+        "default": "Alt+B",
+        "mac": "Command+Shift+B"
+      },
+      "description": "Focus BrowseClaw input"
+    }
+  },
 
   "host_permissions": [
     "<all_urls>"
